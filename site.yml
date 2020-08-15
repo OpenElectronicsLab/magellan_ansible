@@ -1,0 +1,185 @@
+---
+
+- hosts: encrypted_machines
+  gather_facts: no
+  vars:
+      luks_password: "{{ lookup('file', 'secrets/luks_keys/' + inventory_hostname + '_luks.key') }}"
+
+  tasks:
+    - name: Unlock encrypted root drive
+      block:
+        - name: check if the server is already unlocked
+          wait_for_connection:
+              connect_timeout: 5
+              timeout: 5
+      rescue:
+        - name: Unlock the root filesystem with the assigned passphrase
+          block:
+            - name: send the unlock string
+              local_action: command /bin/bash -c "printf \"{{ luks_password }}\" | ssh root@{{ inventory_hostname }} -p 23"
+              no_log: true
+            - name: wait for the server to come up to confirm that it successfully unlocked
+              wait_for_connection:
+                  connect_timeout: 1
+                  timeout: 30
+
+- hosts: all
+  become: true
+
+  tasks:
+      - name: Create an admin group
+        group:
+            name: admin
+            state: present
+      - name: Add admin accounts as a member of the 'admin' group
+        user:
+            name: '{{item}}admin'
+            comment: '{{ item }}' admin account
+            groups: admin
+            shell: /bin/bash
+            password: '*'
+        loop:
+                - kms15
+                - eric
+                - ace
+      - name: set up authorized admin keys
+        authorized_key:
+            user: '{{item}}admin'
+            state: present
+            exclusive: yes
+            key: "{{ lookup('file', 'keys/{{ item }}.keys') }}"
+        loop:
+                - kms15
+                - eric
+                - ace
+      - name: Enable unattended upgrades
+        apt:
+            name: "{{ item }}"
+            state: present
+        loop:
+            - unattended-upgrades
+            - apt-listchanges
+        when: ansible_facts['os_family'] == 'Debian'
+      - name: Apply settings for unattended upgrades
+        copy:
+            src: files/etc_apt_apt.conf.d_02periodic
+            dest: /etc/apt/apt.conf.d/02periodic
+            owner: root
+            group: root
+        when: ansible_facts['os_family'] == 'Debian'
+      - name: Set the dropbear authorized keys
+        authorized_key:
+            user: root
+            state: present
+            path: /etc/dropbear-initramfs/authorized_keys
+            key_options: 'no-port-forwarding,no-agent-forwarding,no-x11-forwarding,command="/bin/cryptroot-unlock"'
+            key: "{{ lookup('file', 'keys/{{ item }}.keys') }}"
+        loop:
+                - kms15
+                - eric
+                - ace
+        notify:
+            - update initramfs
+      - name: Set up a static IP for the dropbear client
+        lineinfile:
+            path: /etc/dropbear-initramfs/config
+            regexp: "^IP="
+            line: "IP={{ ip }}::{{ gateway }}:{{ netmask }}:{{ inventory_hostname }}"
+        notify:
+            - update initramfs
+      - name: Set enp0s25 to use a static ip
+        lineinfile:
+            path: /etc/network/interfaces
+            regexp: "^iface enp0s25"
+            line: "iface enp0s25 inet static"
+      - name: Set the static ip address for enp0s25
+        interfaces_file:
+            iface: enp0s25
+            option: address
+            value: "{{ ip }}"
+      - name: Set the netmask for enp0s25
+        interfaces_file:
+            iface: enp0s25
+            option: netmask
+            value: "{{ netmask }}"
+      - name: Set the gateway for enp0s25
+        interfaces_file:
+            iface: enp0s25
+            option: gateway
+            value: "{{ gateway }}"
+      - name: Activate enp0s25 on startup
+        lineinfile:
+            path: /etc/network/interfaces
+            regexp: "^(auto|allow-hotplug) enp0s25"
+            line: "auto enp0s25"
+      - name: Set DNS server
+        lineinfile:
+            path: /etc/resolv.conf
+            regexp: "^nameserver "
+            line: "nameserver 8.8.8.8"
+  handlers:
+      - name: update initramfs
+        command: update-initramfs -u
+
+# openelectronicslab.org specific details
+- hosts: servers
+  become: true
+
+  tasks:
+      - name: Create an openelectronicslab_admin group
+        group:
+            name: openelectronicslab_admin
+            state: present
+      - name: Add backup machine users
+        user:
+            name: '{{ item }}'
+            shell: /bin/bash
+            groups: openelectronicslab_admin
+            password: '*'
+        loop:
+            - openelectronicslab_backup
+            - ace
+            - eric
+            - kms15
+      - name: set up authorized admin keys
+        authorized_key:
+            user: '{{ item }}'
+            state: present
+            key: "{{ lookup('file', 'keys/' + item + '.keys') }}"
+        loop:
+            - openelectronicslab_backup
+            - ace
+            - eric
+            - kms15
+      - name: Create the openelectronicslab_backups directory
+        file:
+            path: /mnt/storage/openelectronicslab_backups
+            state: directory
+            mode: "u=rwx,g=rwx,o=x"
+            owner: root
+            group: openelectronicslab_admin
+      - name: Add rsync for the openelectronicslab backup
+        apt:
+            name: rsync
+            state: present
+      - name: Add qemu for running gitlab.openelectronicslab.org
+        apt:
+            name: qemu-system-x86
+            state: present
+
+# kendrickshaw.org specific things
+- hosts: magellan.kendrickshaw.org
+  become: true
+
+  tasks:
+      - name: Create the backups directory
+        file:
+            path: /mnt/storage/backups
+            state: directory
+            mode: "u=rwx,g=rwx,o=x"
+            owner: root
+            group: admin
+      - name: Add borgbackup
+        apt:
+            name: borgbackup
+            state: present

@@ -1,0 +1,6 @@
+# ansible inventory
+[servers]
+magellan.kendrickshaw.org ip=154.9.0.86 mac="f4:4d:30:6d:d8:df" gateway=154.9.0.85 netmask=255.255.255.252
+
+[encrypted_machines]
+magellan.kendrickshaw.org
