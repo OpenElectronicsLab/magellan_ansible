@@ -34,7 +34,7 @@
       - name: Add admin accounts as a member of the 'admin' group
         user:
             name: '{{item}}admin'
-            comment: '{{ item }}' admin account
+            comment: '{{ item }} admin account'
             groups: admin
             shell: /bin/bash
             password: '*'
