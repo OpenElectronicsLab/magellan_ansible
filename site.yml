@@ -21,7 +21,7 @@
             - name: wait for the server to come up to confirm that it successfully unlocked
               wait_for_connection:
                   connect_timeout: 1
-                  timeout: 30
+                  timeout: 60
 
 - hosts: all
   become: true
